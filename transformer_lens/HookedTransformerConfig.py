@@ -181,6 +181,7 @@ class HookedTransformerConfig:
         output_logits_soft_cap (float): An optional softcap for output logits, currently only used
             in Gemma-2 (see attn_scores_soft_cap for details). Defaults to -1.0, which means not
             set.
+        encoder_head_type (str, *optional*): The type of module applied to the final hidden states of encoder models.
 
     """
 
@@ -246,6 +247,7 @@ class HookedTransformerConfig:
     use_normalization_before_and_after: bool = False
     attn_scores_soft_cap: float = -1.0
     output_logits_soft_cap: float = -1.0
+    encoder_head_type: Optional[str] = None
 
     def __post_init__(self):
         if self.n_heads == -1:
@@ -325,6 +327,12 @@ class HookedTransformerConfig:
             True,
             False,
         ], f"padding_side must be either True or False, but {self.default_prepend_bos} is given"
+
+        assert self.encoder_head_type in [
+            None,
+            "language_model",
+            "pooled_text_embedding",
+        ], f"encoder_head_type must be None, 'language_model', or 'pooled_text_embedding', but got {self.encoder_head_type}"
 
     @classmethod
     def unwrap(cls, config: Union[Dict, "HookedTransformerConfig"]) -> HookedTransformerConfig:

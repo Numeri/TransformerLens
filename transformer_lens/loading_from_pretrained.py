@@ -15,6 +15,7 @@ from huggingface_hub import HfApi
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
+    AutoModelForTextEncoding,
     BertForPreTraining,
     T5ForConditionalGeneration,
 )
@@ -225,6 +226,7 @@ OFFICIAL_MODEL_NAMES = [
     "google-t5/t5-base",
     "google-t5/t5-large",
     "ai-forever/mGPT",
+    "microsoft/infoxlm-large",
 ]
 """Official model names for models on HuggingFace."""
 
@@ -649,6 +651,7 @@ MODEL_ALIASES = {
     "google-t5/t5-base": ["t5-base"],
     "google-t5/t5-large": ["t5-large"],
     "ai-forever/mGPT": ["mGPT"],
+    "microsoft/infoxlm-large": ["infoxlm-large"],
 }
 """Model aliases for models on HuggingFace."""
 
@@ -988,6 +991,21 @@ def convert_hf_model_config(model_name: str, **kwargs):
             "d_vocab": hf_config.vocab_size,
             "act_fn": "gelu",
             "attention_dir": "bidirectional",
+            "encoder_head_type": "language_model",
+        }
+    elif architecture == "XLMRobertaForMaskedLM" and 'xlm' in official_model_name:
+        cfg_dict = {
+            "d_model": hf_config.hidden_size,
+            "d_head": hf_config.hidden_size // hf_config.num_attention_heads,
+            "n_heads": hf_config.num_attention_heads,
+            "d_mlp": hf_config.intermediate_size,
+            "n_layers": hf_config.num_hidden_layers,
+            "n_ctx": hf_config.max_position_embeddings,
+            "eps": hf_config.layer_norm_eps,
+            "d_vocab": hf_config.vocab_size,
+            "act_fn": hf_config.hidden_act,
+            "attention_dir": "bidirectional",
+            "encoder_head_type": "pooled_text_embedding",
         }
     elif architecture == "MistralForCausalLM":
         cfg_dict = {
@@ -1661,6 +1679,13 @@ def get_pretrained_state_dict(
                     token=huggingface_token,
                     **kwargs,
                 )
+            elif "infoxlm" in official_model_name:
+                hf_model = AutoModelForTextEncoding.from_pretrained(
+                    official_model_name,
+                    torch_dtype=dtype,
+                    token=huggingface_token,
+                    **kwargs,
+                )
             elif "t5" in official_model_name:
                 hf_model = T5ForConditionalGeneration.from_pretrained(
                     official_model_name,
@@ -1694,6 +1719,8 @@ def get_pretrained_state_dict(
         elif cfg.original_architecture == "LlamaForCausalLM":
             state_dict = convert_llama_weights(hf_model, cfg)
         elif cfg.original_architecture == "BertForMaskedLM":
+            state_dict = convert_bert_weights(hf_model, cfg)
+        elif cfg.original_architecture == "XLMRobertaForMaskedLM":
             state_dict = convert_bert_weights(hf_model, cfg)
         elif cfg.original_architecture == "T5ForConditionalGeneration":
             state_dict = convert_t5_weights(hf_model, cfg)

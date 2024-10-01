@@ -67,3 +67,39 @@ class PosEmbed(nn.Module):
             batch_pos_embed = torch.where(offset_padding_mask, 0, pos_embed)
 
         return batch_pos_embed.clone()
+
+
+# Positional Embeddings
+class RobertaPosEmbed(nn.Module):
+    def __init__(self, cfg: Union[Dict, HookedTransformerConfig]):
+        super().__init__()
+        self.cfg = HookedTransformerConfig.unwrap(cfg)
+        self.W_pos = nn.Parameter(
+            torch.empty(self.cfg.n_ctx, self.cfg.d_model, dtype=self.cfg.dtype)
+        )
+        self.padding_token = 1
+
+    def forward(
+        self,
+        tokens: Int[torch.Tensor, "batch pos"],
+        past_kv_pos_offset: int = 0,
+    ) -> Float[torch.Tensor, "batch pos d_model"]:
+        """
+        Forward pass for positional embeddings.
+
+        Args:
+            tokens (Int[torch.Tensor, "batch pos"]): Input tokens.
+            past_kv_pos_offset (int, optional): The length of tokens in the past_kv_cache. Defaults to 0.
+            attention_mask (Int[torch.Tensor, "batch pos"], optional): The attention mask for padded tokens.
+                 Defaults to None.
+
+        Returns:
+            Float[torch.Tensor, "batch pos d_model"]: Absolute position embeddings.
+        """
+        mask = tokens != self.padding_token
+        positions = torch.cumsum(mask, dim=-1) + past_kv_pos_offset
+        positions[~mask] = 0
+        positions += self.padding_token
+
+        pos_embed = self.W_pos[positions]  # [pos, d_model]
+        return pos_embed.clone()

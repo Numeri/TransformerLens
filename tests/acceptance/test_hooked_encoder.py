@@ -97,8 +97,8 @@ def test_bert_block(our_bert, huggingface_bert, hello_world_tokens):
 def test_mlm_head(our_bert, huggingface_bert, hello_world_tokens):
     huggingface_bert_core_outputs = huggingface_bert.bert(hello_world_tokens).last_hidden_state
 
-    our_mlm_head_out = our_bert.mlm_head(huggingface_bert_core_outputs)
-    our_unembed_out = our_bert.unembed(our_mlm_head_out)
+    our_mlm_head_out = our_bert.encoder_head.mlm_head(huggingface_bert_core_outputs)
+    our_unembed_out = our_bert.encoder_head.unembed(our_mlm_head_out)
     huggingface_predictions_out = huggingface_bert.cls.predictions(huggingface_bert_core_outputs)
 
     assert_close(our_unembed_out, huggingface_predictions_out, rtol=1.3e-6, atol=4e-5)
@@ -107,7 +107,7 @@ def test_mlm_head(our_bert, huggingface_bert, hello_world_tokens):
 def test_unembed(our_bert, huggingface_bert, hello_world_tokens):
     huggingface_bert_core_outputs = huggingface_bert.bert(hello_world_tokens).last_hidden_state
 
-    our_mlm_head_out = our_bert.mlm_head(huggingface_bert_core_outputs)
+    our_mlm_head_out = our_bert.encoder_head.mlm_head(huggingface_bert_core_outputs)
     huggingface_predictions_out = huggingface_bert.cls.predictions.transform(
         huggingface_bert_core_outputs
     )
@@ -125,7 +125,7 @@ def test_run_with_cache(our_bert, huggingface_bert, hello_world_tokens):
     assert "blocks.0.attn.hook_q" in cache
     assert "blocks.3.attn.hook_attn_scores" in cache
     assert "blocks.7.hook_resid_post" in cache
-    assert "mlm_head.ln.hook_normalized" in cache
+    assert "encoder_head.mlm_head.ln.hook_normalized" in cache
 
 
 def test_from_pretrained_revision():

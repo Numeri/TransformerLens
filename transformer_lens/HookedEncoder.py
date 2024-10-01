@@ -19,11 +19,16 @@ from typing_extensions import Literal
 
 import transformer_lens.loading_from_pretrained as loading
 from transformer_lens.ActivationCache import ActivationCache
-from transformer_lens.components import BertBlock, BertEmbed, BertMLMHead, Unembed
+from transformer_lens.components import BertBlock, BertEmbed, BertMLMHead, Unembed, BertPooledTextEmbedding
 from transformer_lens.FactoredMatrix import FactoredMatrix
 from transformer_lens.hook_points import HookedRootModule, HookPoint
 from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
 from transformer_lens.utilities import devices
+
+OutputShapeType = Union[
+    Float[torch.Tensor, "batch pos d_vocab"],
+    Float[torch.Tensor, "batch d_model"],
+]
 
 
 class HookedEncoder(HookedRootModule):
@@ -69,9 +74,9 @@ class HookedEncoder(HookedRootModule):
             self.cfg.d_vocab_out = self.cfg.d_vocab
 
         self.embed = BertEmbed(self.cfg)
+
         self.blocks = nn.ModuleList([BertBlock(self.cfg) for _ in range(self.cfg.n_layers)])
-        self.mlm_head = BertMLMHead(cfg)
-        self.unembed = Unembed(self.cfg)
+        self.encoder_head = EncoderHead(self.cfg)
 
         self.hook_full_embed = HookPoint()
 
@@ -94,10 +99,20 @@ class HookedEncoder(HookedRootModule):
     def forward(
         self,
         input: Int[torch.Tensor, "batch pos"],
+        return_type: Literal["logits"],
+        token_type_ids: Optional[Int[torch.Tensor, "batch pos"]] = None,
+        one_zero_attention_mask: Optional[Int[torch.Tensor, "batch pos"]] = None,
+    ) -> Float[torch.Tensor, "batch d_model"]:
+        ...
+
+    @overload
+    def forward(
+        self,
+        input: Int[torch.Tensor, "batch pos"],
         return_type: Literal[None],
         token_type_ids: Optional[Int[torch.Tensor, "batch pos"]] = None,
         one_zero_attention_mask: Optional[Int[torch.Tensor, "batch pos"]] = None,
-    ) -> Optional[Float[torch.Tensor, "batch pos d_vocab"]]:
+    ) -> Optional[OutputShapeType]:
         ...
 
     def forward(
@@ -106,7 +121,7 @@ class HookedEncoder(HookedRootModule):
         return_type: Optional[str] = "logits",
         token_type_ids: Optional[Int[torch.Tensor, "batch pos"]] = None,
         one_zero_attention_mask: Optional[Int[torch.Tensor, "batch pos"]] = None,
-    ) -> Optional[Float[torch.Tensor, "batch pos d_vocab"]]:
+    ) -> Optional[OutputShapeType]:
         """Input must be a batch of tokens. Strings and lists of strings are not yet supported.
 
         return_type Optional[str]: The type of output to return. Can be one of: None (return nothing, don't calculate logits), or 'logits' (return logits).
@@ -137,12 +152,9 @@ class HookedEncoder(HookedRootModule):
 
         for block in self.blocks:
             resid = block(resid, additive_attention_mask)
-        resid = self.mlm_head(resid)
 
-        if return_type is None:
-            return None
+        logits = self.encoder_head(resid, return_type=return_type)
 
-        logits = self.unembed(resid)
         return logits
 
     @overload
@@ -157,6 +169,18 @@ class HookedEncoder(HookedRootModule):
     ) -> Tuple[Float[torch.Tensor, "batch pos d_vocab"], Dict[str, torch.Tensor]]:
         ...
 
+    @overload
+    def run_with_cache(
+        self, *model_args, return_cache_object: Literal[True] = True, **kwargs
+    ) -> Tuple[Float[torch.Tensor, "batch d_model"], ActivationCache]:
+        ...
+
+    @overload
+    def run_with_cache(
+        self, *model_args, return_cache_object: Literal[False], **kwargs
+    ) -> Tuple[Float[torch.Tensor, "batch d_model"], Dict[str, torch.Tensor]]:
+        ...
+
     def run_with_cache(
         self,
         *model_args,
@@ -164,7 +188,7 @@ class HookedEncoder(HookedRootModule):
         remove_batch_dim: bool = False,
         **kwargs,
     ) -> Tuple[
-        Float[torch.Tensor, "batch pos d_vocab"],
+        OutputShapeType,
         Union[ActivationCache, Dict[str, torch.Tensor]],
     ]:
         """
@@ -260,17 +284,21 @@ class HookedEncoder(HookedRootModule):
         return model
 
     @property
-    def W_U(self) -> Float[torch.Tensor, "d_model d_vocab"]:
+    def W_U(self) -> Optional[Float[torch.Tensor, "d_model d_vocab"]]:
         """
         Convenience to get the unembedding matrix (ie the linear map from the final residual stream to the output logits)
         """
+        if self.encoder_head.unembed is None:
+            return None
         return self.unembed.W_U
 
     @property
-    def b_U(self) -> Float[torch.Tensor, "d_vocab"]:
+    def b_U(self) -> Optional[Float[torch.Tensor, "d_vocab"]]:
         """
         Convenience to get the unembedding bias
         """
+        if self.encoder_head.unembed is None:
+            return None
         return self.unembed.b_U
 
     @property
@@ -368,3 +396,50 @@ class HookedEncoder(HookedRootModule):
     def all_head_labels(self) -> List[str]:
         """Returns a list of strings with the format "L{l}H{h}", where l is the layer index and h is the head index."""
         return [f"L{l}H{h}" for l in range(self.cfg.n_layers) for h in range(self.cfg.n_heads)]
+
+
+class EncoderHead(nn.Module):
+    def __init__(self, cfg: Union[Dict, HookedTransformerConfig]):
+        super().__init__()
+        self.cfg = HookedTransformerConfig.unwrap(cfg)
+        if cfg.encoder_head_type == "language_model":
+            self.mlm_head = BertMLMHead(cfg)
+            self.unembed = Unembed(cfg)
+            self._forward = self._language_model_forward
+        elif cfg.encoder_head_type == "pooled_text_embedding":
+            self.text_embedding = BertPooledTextEmbedding(cfg)
+            self.unembed = None
+            self._forward = self._pooled_text_embedding_forward
+        else:
+            raise NotImplementedError(f'Unknown setting {cfg.encoder_head_type = }')
+
+    def forward(
+        self,
+        resid: Float[torch.Tensor, "batch pos d_model"],
+        return_type: Optional[str] = "logits",
+    ) -> torch.Tensor:
+        return self._forward(resid, return_type=return_type)
+
+    def _language_model_forward(
+        self,
+        resid: Float[torch.Tensor, "batch pos d_model"],
+        return_type: Optional[str] = "logits",
+    ) -> torch.Tensor:
+        resid = self.mlm_head(resid)
+
+        if return_type is None:
+            return None
+
+        logits = self.unembed(resid)
+        return logits
+
+    def _pooled_text_embedding_forward(
+        self,
+        resid: Float[torch.Tensor, "batch pos d_model"],
+        return_type: Optional[str] = "logits",
+    ) -> torch.Tensor:
+        if return_type is None:
+            return None
+
+        logits = self.text_embedding(resid)
+        return logits

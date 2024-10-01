@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from jaxtyping import Int
 
-from transformer_lens.components import Embed, LayerNorm, PosEmbed, TokenTypeEmbed
+from transformer_lens.components import Embed, LayerNorm, PosEmbed, RobertaPosEmbed, TokenTypeEmbed
 from transformer_lens.hook_points import HookPoint
 from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
 
@@ -23,7 +23,10 @@ class BertEmbed(nn.Module):
         super().__init__()
         self.cfg = HookedTransformerConfig.unwrap(cfg)
         self.embed = Embed(self.cfg)
-        self.pos_embed = PosEmbed(self.cfg)
+        if self.cfg.original_architecture == "XLMRobertaForMaskedLM":
+            self.pos_embed = RobertaPosEmbed(self.cfg)
+        else:
+            self.pos_embed = PosEmbed(self.cfg)
         self.token_type_embed = TokenTypeEmbed(self.cfg)
         self.ln = LayerNorm(self.cfg)
 
@@ -36,13 +39,11 @@ class BertEmbed(nn.Module):
         input_ids: Int[torch.Tensor, "batch pos"],
         token_type_ids: Optional[Int[torch.Tensor, "batch pos"]] = None,
     ):
-        base_index_id = torch.arange(input_ids.shape[1], device=input_ids.device)
-        index_ids = einops.repeat(base_index_id, "pos -> batch pos", batch=input_ids.shape[0])
         if token_type_ids is None:
             token_type_ids = torch.zeros_like(input_ids)
 
         word_embeddings_out = self.hook_embed(self.embed(input_ids))
-        position_embeddings_out = self.hook_pos_embed(self.pos_embed(index_ids))
+        position_embeddings_out = self.hook_pos_embed(self.pos_embed(input_ids))
         token_type_embeddings_out = self.hook_token_type_embed(
             self.token_type_embed(token_type_ids)
         )

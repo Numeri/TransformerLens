@@ -9,7 +9,7 @@ needed to create many different types of generative language models. They are us
 from .abstract_attention import AbstractAttention
 from .layer_norm import LayerNorm
 from .layer_norm_pre import LayerNormPre
-from .pos_embed import PosEmbed
+from .pos_embed import PosEmbed, RobertaPosEmbed
 from .rms_norm import RMSNorm
 from .rms_norm_pre import RMSNormPre
 from .token_typed_embed import TokenTypeEmbed
@@ -18,6 +18,7 @@ from .unembed import Unembed
 # Only dependent on independent modules
 from .attention import Attention
 from .bert_mlm_head import BertMLMHead
+from .bert_pooled_classifier import BertPooledTextEmbedding
 from .embed import Embed
 from .grouped_query_attention import GroupedQueryAttention
 from .mlps.gated_mlp import GatedMLP
