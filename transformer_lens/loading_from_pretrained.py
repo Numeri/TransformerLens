@@ -227,6 +227,7 @@ OFFICIAL_MODEL_NAMES = [
     "google-t5/t5-large",
     "ai-forever/mGPT",
     "microsoft/infoxlm-large",
+    "Unbabel/wmt22-cometkiwi-da",
 ]
 """Official model names for models on HuggingFace."""
 
@@ -652,6 +653,7 @@ MODEL_ALIASES = {
     "google-t5/t5-large": ["t5-large"],
     "ai-forever/mGPT": ["mGPT"],
     "microsoft/infoxlm-large": ["infoxlm-large"],
+    "Unbabel/wmt22-cometkiwi-da": ["wmt22-cometkiwi-da"],
 }
 """Model aliases for models on HuggingFace."""
 
@@ -725,6 +727,14 @@ def convert_hf_model_config(model_name: str, **kwargs):
         architecture = "Gemma2ForCausalLM"
     elif "gemma" in official_model_name.lower():
         architecture = "GemmaForCausalLM"
+    elif official_model_name == "Unbabel/wmt22-cometkiwi-da":
+        huggingface_token = os.environ.get("HF_TOKEN", None)
+        hf_config = AutoConfig.from_pretrained(
+            "microsoft/infoxlm-large",
+            token=huggingface_token,
+            **kwargs,
+        )
+        architecture = hf_config.architectures[0]
     else:
         huggingface_token = os.environ.get("HF_TOKEN", None)
         hf_config = AutoConfig.from_pretrained(
@@ -1006,6 +1016,22 @@ def convert_hf_model_config(model_name: str, **kwargs):
             "act_fn": hf_config.hidden_act,
             "attention_dir": "bidirectional",
             "encoder_head_type": "pooled_text_embedding",
+        }
+    elif architecture == "XLMRobertaForMaskedLM" and official_model_name == "Unbabel/wmt22-cometkiwi-da":
+        cfg_dict = {
+            "d_model": hf_config.hidden_size,
+            "d_head": hf_config.hidden_size // hf_config.num_attention_heads,
+            "n_heads": hf_config.num_attention_heads,
+            "d_mlp": hf_config.intermediate_size,
+            "n_layers": hf_config.num_hidden_layers,
+            "n_ctx": hf_config.max_position_embeddings,
+            "eps": hf_config.layer_norm_eps,
+            "d_vocab": hf_config.vocab_size,
+            "act_fn": hf_config.hidden_act,
+            "attention_dir": "bidirectional",
+            "tokenizer_name": "microsoft/infoxlm-large",
+            "comet_estimator_width": 3072,
+            "encoder_head_type": "comet_estimator",
         }
     elif architecture == "MistralForCausalLM":
         cfg_dict = {
@@ -1352,7 +1378,8 @@ def convert_hf_model_config(model_name: str, **kwargs):
     # All of these models use LayerNorm
     cfg_dict["original_architecture"] = architecture
     # The name such that AutoTokenizer.from_pretrained works
-    cfg_dict["tokenizer_name"] = official_model_name
+    if "tokenizer_name" not in cfg_dict:
+        cfg_dict["tokenizer_name"] = official_model_name
     if kwargs.get("trust_remote_code", False):
         cfg_dict["trust_remote_code"] = True
     return cfg_dict
@@ -1685,6 +1712,11 @@ def get_pretrained_state_dict(
                     torch_dtype=dtype,
                     token=huggingface_token,
                     **kwargs,
+                )
+            elif "Unbabel" in official_model_name:
+                import comet
+                hf_model = comet.load_from_checkpoint(
+                    comet.download_model(official_model_name)
                 )
             elif "t5" in official_model_name:
                 hf_model = T5ForConditionalGeneration.from_pretrained(

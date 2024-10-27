@@ -182,6 +182,7 @@ class HookedTransformerConfig:
             in Gemma-2 (see attn_scores_soft_cap for details). Defaults to -1.0, which means not
             set.
         encoder_head_type (str, *optional*): The type of module applied to the final hidden states of encoder models.
+        comet_estimator_width (int, *optional*): The width of the up projection in CometKiwi models' score estimator layer.
 
     """
 
@@ -248,6 +249,7 @@ class HookedTransformerConfig:
     attn_scores_soft_cap: float = -1.0
     output_logits_soft_cap: float = -1.0
     encoder_head_type: Optional[str] = None
+    comet_estimator_width: Optional[int] = None
 
     def __post_init__(self):
         if self.n_heads == -1:
@@ -332,7 +334,11 @@ class HookedTransformerConfig:
             None,
             "language_model",
             "pooled_text_embedding",
-        ], f"encoder_head_type must be None, 'language_model', or 'pooled_text_embedding', but got {self.encoder_head_type}"
+            "comet_estimator",
+        ], (
+            "encoder_head_type must be None, 'language_model', 'pooled_text_embedding', or 'comet_estimator' but got"
+            f" {self.encoder_head_type}"
+        )
 
     @classmethod
     def unwrap(cls, config: Union[Dict, "HookedTransformerConfig"]) -> HookedTransformerConfig:

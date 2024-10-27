@@ -19,7 +19,7 @@ from typing_extensions import Literal
 
 import transformer_lens.loading_from_pretrained as loading
 from transformer_lens.ActivationCache import ActivationCache
-from transformer_lens.components import BertBlock, BertEmbed, BertMLMHead, Unembed, BertPooledTextEmbedding
+from transformer_lens.components import BertBlock, BertEmbed, BertMLMHead, Unembed, BertPooledTextEmbedding, CometEstimator
 from transformer_lens.FactoredMatrix import FactoredMatrix
 from transformer_lens.hook_points import HookedRootModule, HookPoint
 from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
@@ -28,6 +28,7 @@ from transformer_lens.utilities import devices
 OutputShapeType = Union[
     Float[torch.Tensor, "batch pos d_vocab"],
     Float[torch.Tensor, "batch d_model"],
+    Float[torch.Tensor, "batch"],
 ]
 
 
@@ -84,6 +85,18 @@ class HookedEncoder(HookedRootModule):
             self.to(self.cfg.device)
 
         self.setup()
+
+        if self.cfg.encoder_head_type == 'comet_estimator':
+            self.layer_output_cache = dict()
+            self.add_caching_hooks(
+                lambda x: (
+                    x == 'blocks.0.hook_resid_pre'
+                    or (x.startswith('blocks.') and x.endswith('hook_normalized_resid_post'))
+                ),
+                cache=self.layer_output_cache,
+            )
+        else:
+            self.layer_output_cache = None
 
     @overload
     def forward(
@@ -153,7 +166,11 @@ class HookedEncoder(HookedRootModule):
         for block in self.blocks:
             resid = block(resid, additive_attention_mask)
 
-        logits = self.encoder_head(resid, return_type=return_type)
+        logits = self.encoder_head(
+            resid,
+            layer_output_cache=self.layer_output_cache,
+            return_type=return_type,
+        )
 
         return logits
 
@@ -410,36 +427,59 @@ class EncoderHead(nn.Module):
             self.text_embedding = BertPooledTextEmbedding(cfg)
             self.unembed = None
             self._forward = self._pooled_text_embedding_forward
+        elif cfg.encoder_head_type == "comet_estimator":
+            self.comet_estimator = CometEstimator(cfg)
+            self.unembed = None
+            self._forward = self._comet_estimator_forward
         else:
             raise NotImplementedError(f'Unknown setting {cfg.encoder_head_type = }')
 
     def forward(
         self,
         resid: Float[torch.Tensor, "batch pos d_model"],
+        layer_output_cache: dict[str, Float[torch.Tensor, "batch pos d_model"]],
         return_type: Optional[str] = "logits",
     ) -> torch.Tensor:
-        return self._forward(resid, return_type=return_type)
+        if return_type is None:
+            return None
+        return self._forward(
+            resid=resid,
+            layer_output_cache=layer_output_cache,
+            return_type=return_type,
+        )
 
     def _language_model_forward(
         self,
         resid: Float[torch.Tensor, "batch pos d_model"],
+        layer_output_cache: Optional[dict[str, Float[torch.Tensor, "batch pos d_model"]]],
         return_type: Optional[str] = "logits",
     ) -> torch.Tensor:
         resid = self.mlm_head(resid)
-
-        if return_type is None:
-            return None
-
         logits = self.unembed(resid)
         return logits
 
     def _pooled_text_embedding_forward(
         self,
         resid: Float[torch.Tensor, "batch pos d_model"],
+        layer_output_cache: Optional[dict[str, Float[torch.Tensor, "batch pos d_model"]]],
         return_type: Optional[str] = "logits",
     ) -> torch.Tensor:
-        if return_type is None:
-            return None
-
         logits = self.text_embedding(resid)
+        return logits
+
+    def _comet_estimator_forward(
+        self,
+        resid: Float[torch.Tensor, "batch pos d_model"],
+        layer_output_cache: Optional[dict[str, Float[torch.Tensor, "batch pos d_model"]]],
+        return_type: Optional[str] = "logits",
+    ) -> torch.Tensor:
+        first_token_activations = torch.stack(
+            tuple(
+                activation[:, 0, :]  # Take first token
+                for activation
+                in layer_output_cache.values()
+            ),
+            dim=1,
+        )
+        logits = self.comet_estimator(first_token_activations)
         return logits

@@ -40,5 +40,6 @@ def test_full_model(our_infoxlm, huggingface_infoxlm, tokenizer):
     hf_embedding = hf_out.pooler_output
     hf_cache = hf_out.hidden_states
     our_embedding, our_cache = our_infoxlm.run_with_cache(input_ids, one_zero_attention_mask=attention_mask)
+
     assert_close(hf_embedding, our_embedding, rtol=1.3e-6, atol=4e-5)
     assert_close(our_cache['blocks.23.hook_normalized_resid_post'], hf_cache[-1], rtol=1.3e-6, atol=4e-5)

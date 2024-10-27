@@ -1,4 +1,5 @@
 import einops
+import torch
 
 from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
 
@@ -6,6 +7,9 @@ from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
 def convert_bert_weights(bert, cfg: HookedTransformerConfig):
     if hasattr(bert, 'bert'):
         submodule = bert.bert
+    elif hasattr(bert, '_get_name') and bert._get_name() == 'UnifiedMetric':
+        # Unbabel/wmt22-cometkiwi-da model
+        submodule = bert.encoder.model
     elif hasattr(bert, 'encoder'):
         submodule = bert
     else:
@@ -78,5 +82,19 @@ def convert_bert_weights(bert, cfg: HookedTransformerConfig):
     elif cfg.encoder_head_type == 'pooled_text_embedding':
         state_dict["encoder_head.text_embedding.dense.weight"] = bert.pooler.dense.weight
         state_dict["encoder_head.text_embedding.dense.bias"] = bert.pooler.dense.bias
+
+    elif cfg.encoder_head_type == "comet_estimator":
+        state_dict["encoder_head.comet_estimator.layerwise_attention.gamma"] = bert.layerwise_attention.gamma
+        # Apply softmax to the layer weights while loading, as they are non-normalized in the state dict
+        state_dict["encoder_head.comet_estimator.layerwise_attention.layer_weights"] = torch.softmax(
+            torch.tensor(bert.layerwise_attention.scalar_parameters),
+            dim=0,
+        )
+        state_dict["encoder_head.comet_estimator.dense_up.weight"] = bert.estimator.ff[0].weight
+        state_dict["encoder_head.comet_estimator.dense_up.bias"] = bert.estimator.ff[0].bias
+        state_dict["encoder_head.comet_estimator.dense_down.weight"] = bert.estimator.ff[3].weight
+        state_dict["encoder_head.comet_estimator.dense_down.bias"] = bert.estimator.ff[3].bias
+        state_dict["encoder_head.comet_estimator.dense_estimator.weight"] = bert.estimator.ff[6].weight
+        state_dict["encoder_head.comet_estimator.dense_estimator.bias"] = bert.estimator.ff[6].bias
 
     return state_dict

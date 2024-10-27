@@ -19,6 +19,7 @@ from .unembed import Unembed
 from .attention import Attention
 from .bert_mlm_head import BertMLMHead
 from .bert_pooled_classifier import BertPooledTextEmbedding
+from .comet_estimator import CometEstimator
 from .embed import Embed
 from .grouped_query_attention import GroupedQueryAttention
 from .mlps.gated_mlp import GatedMLP
