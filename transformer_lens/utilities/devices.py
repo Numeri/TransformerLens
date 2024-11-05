@@ -6,12 +6,13 @@ devices.
 
 from __future__ import annotations
 
-from typing import Optional, Union
+from typing import Optional, Union, TYPE_CHECKING
 
 import torch
 from torch import nn
 
-import transformer_lens
+if TYPE_CHECKING:
+    import transformer_lens
 
 
 def get_device_for_block_index(
