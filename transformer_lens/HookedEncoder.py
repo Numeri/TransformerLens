@@ -24,6 +24,7 @@ from transformer_lens.FactoredMatrix import FactoredMatrix
 from transformer_lens.hook_points import HookedRootModule, HookPoint
 from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
 from transformer_lens.utilities import devices
+from transformer_lens import utils
 
 OutputShapeType = Union[
     Float[torch.Tensor, "batch pos d_vocab"],
@@ -105,6 +106,8 @@ class HookedEncoder(HookedRootModule):
         return_type: Literal["logits"],
         token_type_ids: Optional[Int[torch.Tensor, "batch pos"]] = None,
         one_zero_attention_mask: Optional[Int[torch.Tensor, "batch pos"]] = None,
+        stop_at_layer: Optional[int] = None,
+        prepend_bos: bool = False,
     ) -> Float[torch.Tensor, "batch pos d_vocab"]:
         ...
 
@@ -115,6 +118,8 @@ class HookedEncoder(HookedRootModule):
         return_type: Literal["logits"],
         token_type_ids: Optional[Int[torch.Tensor, "batch pos"]] = None,
         one_zero_attention_mask: Optional[Int[torch.Tensor, "batch pos"]] = None,
+        stop_at_layer: Optional[int] = None,
+        prepend_bos: bool = False,
     ) -> Float[torch.Tensor, "batch d_model"]:
         ...
 
@@ -125,6 +130,8 @@ class HookedEncoder(HookedRootModule):
         return_type: Literal[None],
         token_type_ids: Optional[Int[torch.Tensor, "batch pos"]] = None,
         one_zero_attention_mask: Optional[Int[torch.Tensor, "batch pos"]] = None,
+        stop_at_layer: Optional[int] = None,
+        prepend_bos: bool = False,
     ) -> Optional[OutputShapeType]:
         ...
 
@@ -134,6 +141,8 @@ class HookedEncoder(HookedRootModule):
         return_type: Optional[str] = "logits",
         token_type_ids: Optional[Int[torch.Tensor, "batch pos"]] = None,
         one_zero_attention_mask: Optional[Int[torch.Tensor, "batch pos"]] = None,
+        stop_at_layer: Optional[int] = None,
+        prepend_bos: bool = False,
     ) -> Optional[OutputShapeType]:
         """Input must be a batch of tokens. Strings and lists of strings are not yet supported.
 
@@ -142,6 +151,10 @@ class HookedEncoder(HookedRootModule):
         token_type_ids Optional[torch.Tensor]: Binary ids indicating whether a token belongs to sequence A or B. For example, for two sentences: "[CLS] Sentence A [SEP] Sentence B [SEP]", token_type_ids would be [0, 0, ..., 0, 1, ..., 1, 1]. `0` represents tokens from Sentence A, `1` from Sentence B. If not provided, BERT assumes a single sequence input. Typically, shape is (batch_size, sequence_length).
 
         one_zero_attention_mask: Optional[torch.Tensor]: A binary mask which indicates which tokens should be attended to (1) and which should be ignored (0). Primarily used for padding variable-length sentences in a batch. For instance, in a batch with sentences of differing lengths, shorter sentences are padded with 0s on the right. If not provided, the model assumes all tokens should be attended to.
+
+        stop_at_layer: Optional[int]: Stop computation at this layer of the model. Useful when only some layers' cached values are needed. If less than the number of layers, the residual at that point will be returned.
+
+        prepend_bos: bool: Currently ignored, as this class only support token ids as input.
         """
 
         tokens = input
@@ -163,8 +176,14 @@ class HookedEncoder(HookedRootModule):
             torch.where(mask == 1, large_negative_number, 0) if mask is not None else None
         )
 
-        for block in self.blocks:
+        if stop_at_layer is None:
+            stop_at_layer = len(self.blocks)
+
+        for block in self.blocks[:stop_at_layer + 1]:
             resid = block(resid, additive_attention_mask)
+
+        if stop_at_layer < len(self.blocks):
+            return resid
 
         logits = self.encoder_head(
             resid,
